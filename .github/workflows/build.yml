@@ -1,35 +1,58 @@
-name: Build Windows EXE
+name: Build and Release SingularTweaks
 
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'   # runs when you push a tag like v1.0.1, v1.0.2, etc.
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-      - name: Check out code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          pip install -r requirements.txt || pip install fastapi uvicorn pydantic requests pyinstaller
 
       - name: Build EXE with PyInstaller
         run: |
-          python -m PyInstaller --onefile --name SingularTweaks singular_tweaks\core.py
+          pyinstaller --onefile --name SingularTweaks singular_tweaks/core.py
+        shell: pwsh
 
-      - name: Upload EXE to GitHub Release
+      - name: Upload EXE as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SingularTweaks-${{ github.ref_name }}
+          path: dist/SingularTweaks.exe
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SingularTweaks-${{ github.ref_name }}
+          path: dist
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            Automated release build for ${{ github.ref_name }}
           files: dist/SingularTweaks.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
