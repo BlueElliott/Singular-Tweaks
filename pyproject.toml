@@ -1,6 +1,6 @@
 [project]
 name = "singular-tweaks"
-version = "1.0.0"
+version = "1.0.1"
 description = "Python tools and tweaks for controlling Singular.live"
 readme = "README.md"
 requires-python = ">=3.10"

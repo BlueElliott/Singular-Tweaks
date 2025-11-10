@@ -1,3 +1,4 @@
+from . import __version__
 # ...existing code...
 import os, time, re, requests
 from typing import List, Dict, Any, Optional
@@ -577,23 +578,49 @@ def sub_timecontrol(
 
 # ================== 5. SIMPLE HTML UI ==================
 # A very small, dependency-free page to configure tokens and keys.
+# ================== 5. SIMPLE HTML UI ==================
+# A very small, dependency-free page to configure tokens and keys.
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return """
+    return f"""
     <html>
       <head>
-        <title>Singular Tweaks</title>
+        <title>Singular Tweaks v{__version__}</title>
         <style>
-          body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; max-width: 900px; margin: 2rem auto; }
-          fieldset { margin-bottom: 1.5rem; padding: 1rem; }
-          legend { font-weight: 600; }
-          label { display:block; margin-top:0.5rem; }
-          input { width:100%; padding:0.35rem 0.5rem; box-sizing:border-box; }
-          button { margin-top:0.75rem; padding:0.4rem 0.8rem; cursor:pointer; }
-          pre { background:#111; color:#0f0; padding:0.5rem; white-space:pre-wrap; max-height: 300px; overflow:auto; }
+          body {{
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            max-width: 900px;
+            margin: 2rem auto;
+          }}
+          fieldset {{ margin-bottom: 1.5rem; padding: 1rem; }}
+          legend {{ font-weight: 600; }}
+          label {{ display:block; margin-top:0.5rem; }}
+          input {{
+            width:100%; padding:0.35rem 0.5rem; box-sizing:border-box;
+          }}
+          button {{
+            margin-top:0.75rem; padding:0.4rem 0.8rem; cursor:pointer;
+          }}
+          pre {{
+            background:#111; color:#0f0; padding:0.5rem;
+            white-space:pre-wrap; max-height: 300px; overflow:auto;
+          }}
+          .version-badge {{
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #222;
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            opacity: 0.8;
+          }}
         </style>
       </head>
       <body>
+        <div class="version-badge">v{__version__}</div>
+
         <h1>Singular Tweaks</h1>
         <p>Configure your <strong>Singular Control App</strong>, optional <strong>Data Stream</strong>, and <strong>TfL</strong> API keys.</p>
 
@@ -630,39 +657,39 @@ def index():
         </fieldset>
 
         <script>
-          async function postJSON(url, data) {
-            const res = await fetch(url, {
+          async function postJSON(url, data) {{
+            const res = await fetch(url, {{
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {{ "Content-Type": "application/json" }},
               body: JSON.stringify(data),
-            });
+            }});
             const text = await res.text();
             document.getElementById("output").innerText = text;
-          }
+          }}
 
-          document.getElementById("singular-form").onsubmit = (e) => {
+          document.getElementById("singular-form").onsubmit = (e) => {{
             e.preventDefault();
             const f = e.target;
-            postJSON("/config/singular", {
+            postJSON("/config/singular", {{
               token: f.token.value,
               stream_url: f.stream_url.value || null,
-            });
-          };
+            }});
+          }};
 
-          document.getElementById("tfl-form").onsubmit = (e) => {
+          document.getElementById("tfl-form").onsubmit = (e) => {{
             e.preventDefault();
             const f = e.target;
-            postJSON("/config/tfl", {
+            postJSON("/config/tfl", {{
               app_id: f.app_id.value,
               app_key: f.app_key.value,
-            });
-          };
+            }});
+          }};
 
-          async function pingSingular() {
+          async function pingSingular() {{
             const res = await fetch("/singular/ping");
             const text = await res.text();
             document.getElementById("output").innerText = text;
-          }
+          }}
         </script>
       </body>
     </html>
