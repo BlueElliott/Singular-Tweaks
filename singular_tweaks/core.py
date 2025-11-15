@@ -1,10 +1,3 @@
-try:
-    # Normal case: installed as a package
-    from singular_tweaks import __version__  # type: ignore
-except Exception:
-    # Fallback for frozen / odd environments
-    __version__ = "dev"
-
 import os
 import sys
 import time
@@ -14,17 +7,44 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote
+from html import escape as html_escape
 
 import requests
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from fastapi.routing import APIRoute
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
-from fastapi.routing import APIRoute
+
+# ================== 0. PATHS & VERSION ==================
+
+def _app_root() -> Path:
+    """Folder where the app is running from (install dir or source)."""
+    if getattr(sys, "frozen", False):  # PyInstaller exe
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent.parent  # Go up one level from singular_tweaks/
+
+
+def _runtime_version() -> str:
+    """
+    Try to read version from version.txt next to the app.
+    Fallback to 'dev' if not present.
+    """
+    try:
+        vfile = _app_root() / "version.txt"
+        if vfile.exists():
+            text = vfile.read_text(encoding="utf-8").strip()
+            if ":" in text:
+                text = text.split(":", 1)[1].strip()
+            return text
+    except Exception:
+        pass
+    return "1.0.1"
+
 
 # ================== 1. CONFIG & GLOBALS ==================
 
-# Default port (can be overridden by env var; user-configurable in settings)
 DEFAULT_PORT = int(os.getenv("SINGULAR_TWEAKS_PORT", "3113"))
 
 SINGULAR_API_BASE = "https://app.singular.live/apiv2"
@@ -33,14 +53,13 @@ TFL_URL = (
     "tube,overground,dlr,elizabeth-line,tram,cable-car/Status"
 )
 
-# Where to store persistent config (next to the exe / package)
 def _config_dir() -> Path:
-    if getattr(sys, "frozen", False):  # PyInstaller
+    if getattr(sys, "frozen", False):
         base = Path(sys.executable).parent
     else:
+        # When running from source, use singular_tweaks directory
         base = Path(__file__).resolve().parent
     return base
-
 
 CONFIG_PATH = _config_dir() / "singular_tweaks_config.json"
 
@@ -50,27 +69,17 @@ if not logger.handlers:
 
 
 class AppConfig(BaseModel):
-    # Singular Control App token (for /model + /control calls)
     singular_token: Optional[str] = None
-    # Singular Data Stream URL (for TfL payloads)
     singular_stream_url: Optional[str] = None
-    # TfL creds (optional extra)
     tfl_app_id: Optional[str] = None
     tfl_app_key: Optional[str] = None
-
-    # Feature toggles
     enable_tfl: bool = True
     enable_datastream: bool = True
-
-    # Optional persistent port override
+    theme: str = "dark"
     port: Optional[int] = None
 
 
 def load_config() -> AppConfig:
-    """
-    Load configuration from env + JSON file (if present).
-    Env vars provide defaults; file can override.
-    """
     base: Dict[str, Any] = {
         "singular_token": os.getenv("SINGULAR_TOKEN") or None,
         "singular_stream_url": os.getenv("SINGULAR_STREAM_URL") or None,
@@ -78,9 +87,8 @@ def load_config() -> AppConfig:
         "tfl_app_key": os.getenv("TFL_APP_KEY") or None,
         "enable_tfl": True,
         "enable_datastream": True,
-        "port": int(os.getenv("SINGULAR_TWEAKS_PORT"))
-        if os.getenv("SINGULAR_TWEAKS_PORT")
-        else None,
+        "theme": "dark",
+        "port": int(os.getenv("SINGULAR_TWEAKS_PORT")) if os.getenv("SINGULAR_TWEAKS_PORT") else None,
     }
     if CONFIG_PATH.exists():
         try:
@@ -103,15 +111,12 @@ def save_config(cfg: AppConfig) -> None:
 
 CONFIG = load_config()
 
-
 def effective_port() -> int:
     return CONFIG.port or DEFAULT_PORT
 
 
-# Simple in-memory event log of HTTP-triggered commands
 COMMAND_LOG: List[str] = []
 MAX_LOG_ENTRIES = 200
-
 
 def log_event(kind: str, detail: str) -> None:
     ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -121,27 +126,25 @@ def log_event(kind: str, detail: str) -> None:
         del COMMAND_LOG[: len(COMMAND_LOG) - MAX_LOG_ENTRIES]
 
 
-# ================== 2. OPENAPI & APP ==================
-
+# ================== 2. FASTAPI APP ==================
 
 def generate_unique_id(route: APIRoute) -> str:
-    methods = sorted(
-        [
-            m
-            for m in route.methods
-            if m in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
-        ]
-    )
+    methods = sorted([m for m in route.methods if m in {"GET","POST","PUT","PATCH","DELETE","OPTIONS","HEAD"}])
     method = methods[0].lower() if methods else "get"
     safe_path = re.sub(r"[^a-z0-9]+", "-", route.path.lower()).strip("-")
     return f"{route.name}-{method}-{safe_path}"
 
-
 app = FastAPI(
     title="TfL + Singular Tweaks",
-    description="Helper UI and HTTP API for controlling Singular.live + optional TfL data.",
+    description="Helper UI and HTTP API for Singular.live + optional TfL data.",
+    version=_runtime_version(),
     generate_unique_id_function=generate_unique_id,
 )
+
+# static files (for font)
+STATIC_DIR = _app_root() / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR), html=False), name="static")
 
 
 def tfl_params() -> Dict[str, str]:
@@ -155,14 +158,16 @@ def tfl_params() -> Dict[str, str]:
 def fetch_all_line_statuses() -> Dict[str, str]:
     if not CONFIG.enable_tfl:
         raise HTTPException(400, "TfL integration is disabled in settings")
-    r = requests.get(TFL_URL, params=tfl_params(), timeout=10)
-    r.raise_for_status()
-    out: Dict[str, str] = {}
-    for line in r.json():
-        out[line["name"]] = (
-            line.get("lineStatuses", [{}])[0].get("statusSeverityDescription", "Unknown")
-        )
-    return out
+    try:
+        r = requests.get(TFL_URL, params=tfl_params(), timeout=10)
+        r.raise_for_status()
+        out: Dict[str, str] = {}
+        for line in r.json():
+            out[line["name"]] = line.get("lineStatuses", [{}])[0].get("statusSeverityDescription", "Unknown")
+        return out
+    except requests.RequestException as e:
+        logger.error("TfL API request failed: %s", e)
+        raise HTTPException(503, f"TfL API request failed: {str(e)}")
 
 
 def send_to_datastream(payload: Dict[str, Any]):
@@ -170,45 +175,46 @@ def send_to_datastream(payload: Dict[str, Any]):
         raise HTTPException(400, "Data Stream integration is disabled in settings")
     if not CONFIG.singular_stream_url:
         raise HTTPException(400, "No Singular data stream URL configured")
-    resp = requests.put(
-        CONFIG.singular_stream_url,
-        json=payload,
-        headers={"Content-Type": "application/json"},
-        timeout=10,
-    )
     try:
+        resp = requests.put(
+            CONFIG.singular_stream_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
         resp.raise_for_status()
-    except Exception as e:
-        logger.exception("Datastream PUT failed")
         return {
             "stream_url": CONFIG.singular_stream_url,
             "status": resp.status_code,
             "response": resp.text,
+        }
+    except requests.RequestException as e:
+        logger.exception("Datastream PUT failed")
+        return {
+            "stream_url": CONFIG.singular_stream_url,
+            "status": getattr(resp, 'status_code', 0),
+            "response": getattr(resp, 'text', ''),
             "error": str(e),
         }
-    return {
-        "stream_url": CONFIG.singular_stream_url,
-        "status": resp.status_code,
-        "response": resp.text,
-    }
 
 
 def ctrl_patch(items: list):
     if not CONFIG.singular_token:
         raise HTTPException(400, "No Singular control app token configured")
     ctrl_control = f"{SINGULAR_API_BASE}/controlapps/{CONFIG.singular_token}/control"
-    resp = requests.patch(
-        ctrl_control,
-        json=items,
-        headers={"Content-Type": "application/json"},
-        timeout=10,
-    )
     try:
+        resp = requests.patch(
+            ctrl_control,
+            json=items,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
         resp.raise_for_status()
-    except Exception:
+        log_event("Control PATCH", f"{ctrl_control} items={len(items)}")
+        return resp
+    except requests.RequestException as e:
         logger.exception("Control PATCH failed")
-    log_event("Control PATCH", f"{ctrl_control} items={len(items)}")
-    return resp
+        raise HTTPException(503, f"Control PATCH failed: {str(e)}")
 
 
 def now_ms_float() -> float:
@@ -222,29 +228,27 @@ def slugify(name: str) -> str:
 
 
 def _base_url(request: Request) -> str:
-    host = (
-        request.headers.get("x-forwarded-host")
-        or request.headers.get("host")
-        or request.url.netloc
-    )
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
     return f"{proto}://{host}"
 
 
-# ================== 2.3 AUTO-DISCOVERY REGISTRY ==================
+# ================== 3. REGISTRY (Control App model) ==================
 
 REGISTRY: Dict[str, Dict[str, Any]] = {}
 ID_TO_KEY: Dict[str, str] = {}
-
 
 def singular_model_fetch() -> Any:
     if not CONFIG.singular_token:
         raise RuntimeError("No Singular control app token configured")
     ctrl_model = f"{SINGULAR_API_BASE}/controlapps/{CONFIG.singular_token}/model"
-    r = requests.get(ctrl_model, timeout=10)
-    if not r.ok:
-        raise RuntimeError(f"Model fetch failed: {r.status_code} {r.text}")
-    return r.json()
+    try:
+        r = requests.get(ctrl_model, timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except requests.RequestException as e:
+        logger.error("Model fetch failed: %s", e)
+        raise RuntimeError(f"Model fetch failed: {r.status_code if 'r' in locals() else 'unknown'}")
 
 
 def _walk_nodes(node):
@@ -292,7 +296,7 @@ def kfind(key_or_id: str) -> str:
         return key_or_id
     if key_or_id in ID_TO_KEY:
         return ID_TO_KEY[key_or_id]
-    raise HTTPException(status_code=404, detail=f"Subcomposition not found: {key_or_id}")
+    raise HTTPException(404, f"Subcomposition not found: {key_or_id}")
 
 
 def coerce_value(field_meta: Dict[str, Any], value_str: str, as_string: bool = False):
@@ -320,107 +324,102 @@ async def lifespan(app: FastAPI):
         logger.warning("[WARN] Registry build failed: %s", e)
     yield
 
-
 app.router.lifespan_context = lifespan
 
-# ================== 3. CONFIG HTTP API ==================
-
+# ================== 4. Pydantic models ==================
 
 class SingularConfigIn(BaseModel):
     token: str
-
 
 class TflConfigIn(BaseModel):
     app_id: str
     app_key: str
 
-
 class StreamConfigIn(BaseModel):
     stream_url: str
-
 
 class SettingsIn(BaseModel):
     port: Optional[int] = None
     enable_tfl: bool = True
     enable_datastream: bool = True
+    theme: Optional[str] = "dark"
 
+class SingularItem(BaseModel):
+    subCompositionId: str
+    state: Optional[str] = None
+    payload: Optional[dict] = None
+
+
+# ================== 5. HTML helpers ==================
 
 def _nav_html() -> str:
     show_integrations = CONFIG.enable_tfl or CONFIG.enable_datastream
-    parts = [
-        '<div class="nav">',
-        '<a href="/">Home</a>',
-        '<a href="/commands">Commands</a>',
-    ]
+    parts = ['<div class="nav">']
+    parts.append('<a href="/">Home</a>')
+    parts.append('<a href="/commands">Commands</a>')
     if show_integrations:
         parts.append('<a href="/integrations">Integrations</a>')
-    parts.extend(
-        [
-            '<a href="/settings">Settings</a>',
-            '<a href="/docs">API docs</a>',
-            "</div>",
-        ]
-    )
+    parts.append('<a href="/settings">Settings</a>')
+    parts.append('</div>')
     return "".join(parts)
 
-def _base_style() -> str:
-    return """
-      <style>
-        body {
-          font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-          max-width: 1000px;
-          margin: 2rem auto;
-        }
-        fieldset { margin-bottom: 1.5rem; padding: 1rem; }
-        legend { font-weight: 600; }
-        label { display:block; margin-top:0.5rem; }
-        input, select {
-          width:100%; padding:0.35rem 0.5rem; box-sizing:border-box;
-        }
-        button {
-          margin-top:0.75rem; padding:0.4rem 0.8rem; cursor:pointer;
-        }
-        pre {
-          background:#111; color:#0f0; padding:0.5rem;
-          white-space:pre-wrap; max-height: 300px; overflow:auto;
-        }
-        .version-badge {
-          position: fixed;
-          top: 10px;
-          right: 10px;
-          background: #222;
-          color: #fff;
-          padding: 4px 10px;
-          border-radius: 999px;
-          font-size: 12px;
-          opacity: 0.9;
-        }
-        .nav {
-          position: fixed;
-          top: 10px;
-          left: 10px;
-          font-size: 13px;
-        }
-        .nav a {
-          color: #06f;
-          text-decoration: none;
-          margin-right: 8px;
-        }
-        table {
-          border-collapse: collapse;
-          width: 100%;
-          margin-top: 0.5rem;
-        }
-        th, td {
-          border: 1px solid #444;
-          padding: 4px 6px;
-          font-size: 13px;
-        }
-        th { background:#222; }
-        code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-      </style>
-    """
 
+def _base_style() -> str:
+    theme = CONFIG.theme or "dark"
+    if theme == "light":
+        bg = "#f5f5f5"; fg = "#111"; card_bg = "#fff"; border = "#ccc"; accent = "#0af"
+    else:
+        bg = "#05070a"; fg = "#f5f5f5"; card_bg = "#10141c"; border = "#333"; accent = "#4da3ff"
+
+    lines = []
+    lines.append("<style>")
+    lines.append("  @font-face {")
+    lines.append("    font-family: 'ITVReem';")
+    lines.append("    src: url('/static/ITV Reem-Regular.ttf') format('truetype');")
+    lines.append("    font-weight: normal;")
+    lines.append("    font-style: normal;")
+    lines.append("  }")
+    lines.append(
+        "  body { font-family: 'ITVReem', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;"
+        f" max-width: 1000px; margin: 2rem auto; background: {bg}; color: {fg}; padding: 0 1rem; }}"
+    )
+    lines.append(
+        f"  fieldset {{ margin-bottom: 1.5rem; padding: 1rem; background: {card_bg}; border: 1px solid {border}; border-radius: 4px; }}"
+    )
+    lines.append("  legend { font-weight: 600; padding: 0 0.5rem; }")
+    lines.append("  label { display:block; margin-top:0.5rem; }")
+    lines.append(
+        f"  input, select {{ width:100%; padding:0.35rem 0.5rem; box-sizing:border-box;"
+        f" background:#181c26; color:{fg}; border:1px solid {border}; border-radius: 3px; }}"
+    )
+    lines.append(
+        f"  button {{ margin-top:0.75rem; padding:0.4rem 0.8rem; cursor:pointer;"
+        f" background:{accent}; color:#fff; border:none; border-radius: 3px; }}"
+    )
+    lines.append("  button:hover { opacity: 0.9; }")
+    lines.append(
+        "  pre { background:#000; color:#0f0; padding:0.5rem; white-space:pre-wrap; max-height:300px; overflow:auto; border-radius: 3px; }"
+    )
+    lines.append(
+        "  .version-badge { position:fixed; top:10px; right:10px; background:#222; color:#fff;"
+        " padding:4px 10px; border-radius:999px; font-size:12px; opacity:0.9; }"
+    )
+    lines.append("  .nav { position:fixed; top:10px; left:10px; font-size:13px; }")
+    lines.append(f"  .nav a {{ color:{accent}; text-decoration:none; margin-right:8px; }}")
+    lines.append("  .nav a:hover { text-decoration: underline; }")
+    lines.append("  table { border-collapse:collapse; width:100%; margin-top:0.5rem; }")
+    lines.append(f"  th, td {{ border:1px solid {border}; padding:6px 8px; font-size:13px; }}")
+    lines.append("  th { background:#222; color:#fff; text-align: left; }")
+    lines.append(
+        "  code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,"
+        ' "Liberation Mono", "Courier New", monospace; background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px; }'
+    )
+    lines.append("  h1, h2, h3 { margin-top: 1rem; }")
+    lines.append("</style>")
+    return "\n".join(lines)
+
+
+# ================== 6. JSON config endpoints ==================
 
 @app.get("/config")
 def get_config():
@@ -439,6 +438,7 @@ def get_config():
             "raw_port": CONFIG.port,
             "enable_tfl": CONFIG.enable_tfl,
             "enable_datastream": CONFIG.enable_datastream,
+            "theme": CONFIG.theme,
         },
     }
 
@@ -477,6 +477,7 @@ def get_settings_json():
         "enable_tfl": CONFIG.enable_tfl,
         "enable_datastream": CONFIG.enable_datastream,
         "config_path": str(CONFIG_PATH),
+        "theme": CONFIG.theme,
     }
 
 
@@ -485,6 +486,7 @@ def update_settings(settings: SettingsIn):
     CONFIG.enable_tfl = settings.enable_tfl
     CONFIG.enable_datastream = settings.enable_datastream
     CONFIG.port = settings.port
+    CONFIG.theme = (settings.theme or "dark")
     save_config(CONFIG)
     return {
         "ok": True,
@@ -492,6 +494,7 @@ def update_settings(settings: SettingsIn):
         "port": effective_port(),
         "enable_tfl": CONFIG.enable_tfl,
         "enable_datastream": CONFIG.enable_datastream,
+        "theme": CONFIG.theme,
     }
 
 
@@ -524,12 +527,11 @@ def singular_ping():
         raise HTTPException(500, f"Singular ping failed: {e}")
 
 
-# ================== 4. OLD DATA STREAM / TFL ENDPOINTS ==================
-
+# ================== 7. TfL / DataStream endpoints ==================
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": __version__, "port": effective_port()}
+    return {"status": "ok", "version": _runtime_version(), "port": effective_port()}
 
 
 @app.get("/status")
@@ -577,14 +579,7 @@ def update_blank():
         raise HTTPException(500, f"Blank failed: {e}")
 
 
-# ================== 4.1 CONTROL APP: INTROSPECTION & COMMANDS ==================
-
-
-class SingularItem(BaseModel):
-    subCompositionId: str
-    state: Optional[str] = None
-    payload: Optional[dict] = None
-
+# ================== 8. Control app endpoints ==================
 
 @app.post("/singular/control")
 def singular_control(items: List[SingularItem]):
@@ -595,11 +590,7 @@ def singular_control(items: List[SingularItem]):
 @app.get("/singular/list")
 def singular_list():
     return {
-        k: {
-            "id": v["id"],
-            "name": v["name"],
-            "fields": list(v["fields"].keys()),
-        }
+        k: {"id": v["id"], "name": v["name"], "fields": list(v["fields"].keys())}
         for k, v in REGISTRY.items()
     }
 
@@ -613,20 +604,15 @@ def singular_refresh():
 def _field_examples(base: str, key: str, field_id: str, field_meta: dict):
     ftype = (field_meta.get("type") or "").lower()
     examples: Dict[str, str] = {}
-
     set_url = f"{base}/{key}/set?field={quote(field_id)}&value=VALUE"
     examples["set_url"] = set_url
-    examples["set_curl"] = f'curl -X POST "{set_url}"'
-
     if ftype == "timecontrol":
         start = f"{base}/{key}/timecontrol?field={quote(field_id)}&run=true&value=0"
         stop = f"{base}/{key}/timecontrol?field={quote(field_id)}&run=false&value=0"
         examples["timecontrol_start_url"] = start
         examples["timecontrol_stop_url"] = stop
-        examples["timecontrol_start_curl"] = f'curl -X POST "{start}"'
-        examples["timecontrol_stop_curl"] = f'curl -X POST "{stop}"'
         examples["start_10s_if_supported"] = (
-            f'{base}/{key}/timecontrol?field={quote(field_id)}&run=true&value=0&seconds=10'
+            f"{base}/{key}/timecontrol?field={quote(field_id)}&run=true&value=0&seconds=10"
         )
     return examples
 
@@ -672,10 +658,7 @@ def singular_commands_for_one(key: str, request: Request):
         if not fid:
             continue
         entry["fields"][fid] = _field_examples(base, k, fid, fmeta)
-    return {
-        "docs": f"{base}/docs",
-        "commands": entry,
-    }
+    return {"commands": entry}
 
 
 @app.api_route("/{key}/in", methods=["GET", "POST"])
@@ -723,9 +706,7 @@ def sub_timecontrol(
     run: bool = Query(True, description="True=start, False=stop"),
     value: int = Query(0, description="usually 0"),
     utc: Optional[float] = Query(None, description="override UTC ms; default now()"),
-    seconds: Optional[int] = Query(
-        None, description="optional duration for countdowns"
-    ),
+    seconds: Optional[int] = Query(None, description="optional duration for countdowns"),
 ):
     k = kfind(key)
     meta = REGISTRY[k]
@@ -735,11 +716,9 @@ def sub_timecontrol(
         raise HTTPException(404, f"Field not found on {k}: {field}")
     if (fields[field].get("type") or "").lower() != "timecontrol":
         raise HTTPException(400, f"Field '{field}' is not a timecontrol")
-
     payload: Dict[str, Any] = {}
     if seconds is not None:
         payload["Countdown Seconds"] = str(seconds)
-
     payload[field] = {
         "UTC": float(utc if utc is not None else now_ms_float()),
         "isRunning": bool(run),
@@ -750,391 +729,351 @@ def sub_timecontrol(
     return {"status": r.status_code, "id": sid, "sent": payload, "response": r.text}
 
 
-# ================== 5. HTML PAGES ==================
-
+# ================== 9. HTML Pages ==================
 
 @app.get("/", response_class=HTMLResponse)
 def index():
+    parts: List[str] = []
+    parts.append("<html><head>")
+    parts.append("<title>Singular Tweaks v" + _runtime_version() + "</title>")
+    parts.append(_base_style())
+    parts.append("</head><body>")
+    parts.append(_nav_html())
+    parts.append('<div class="version-badge">v' + _runtime_version() + " • port " + str(effective_port()) + "</div>")
+    parts.append("<h1>Singular Tweaks</h1>")
+    parts.append("<p>Mainly used to send <strong>GET</strong> and simple HTTP commands to your Singular Control App.</p>")
     saved = "Not set"
     if CONFIG.singular_token:
-        tail = CONFIG.singular_token[-6:]
-        saved = f"...{tail}"
-    status_badge = "Unknown"
-    return f"""
-    <html>
-      <head>
-        <title>Singular Tweaks v{__version__}</title>
-        {_base_style()}
-      </head>
-      <body>
-        {_nav_html()}
-        <div class="version-badge">v{__version__} • port {effective_port()}</div>
-
-        <h1>Singular Tweaks</h1>
-        <p>Mainly used to send <strong>GET</strong> and simple HTTP commands to your Singular Control App.</p>
-
-        <fieldset>
-          <legend>Singular Control App</legend>
-          <p>Enter your <strong>Control App Token</strong> (from Singular.live).</p>
-          <p>Saved token: <code id="saved-token">{saved}</code></p>
-          <p>Status: <span id="singular-status">{status_badge}</span></p>
-          <form id="singular-form">
-            <label>Control App Token
-              <input name="token" autocomplete="off" />
-            </label>
-            <button type="submit">Save Token &amp; Refresh Commands</button>
-            <button type="button" onclick="pingSingular()">Ping Singular</button>
-            <button type="button" onclick="refreshRegistry()">Rebuild Command List</button>
-          </form>
-        </fieldset>
-
-        <fieldset>
-          <legend>Event Log</legend>
-          <p>Shows recent HTTP commands and updates triggered by this tool.</p>
-          <button type="button" onclick="loadEvents()">Refresh Log</button>
-          <pre id="log">No events yet.</pre>
-        </fieldset>
-
-        <script>
-          async function postJSON(url, data) {{
-            const res = await fetch(url, {{
-              method: "POST",
-              headers: {{ "Content-Type": "application/json" }},
-              body: JSON.stringify(data),
-            }});
-            const text = await res.text();
-            return text;
-          }}
-
-          async function loadConfig() {{
-            try {{
-              const res = await fetch("/config");
-              if (!res.ok) return;
-              const cfg = await res.json();
-              const tokenSet = cfg.singular.token_set;
-              const token = cfg.singular.token;
-              const saved = document.getElementById("saved-token");
-              if (tokenSet && token) {{
-                saved.textContent = "..." + token.slice(-6);
-              }} else {{
-                saved.textContent = "Not set";
-              }}
-            }} catch (e) {{
-              console.error(e);
-            }}
-          }}
-
-          async function pingSingular() {{
-            const statusEl = document.getElementById("singular-status");
-            statusEl.textContent = "Checking...";
-            try {{
-              const res = await fetch("/singular/ping");
-              const txt = await res.text();
-              try {{
-                const data = JSON.parse(txt);
-                if (data.ok) {{
-                  statusEl.textContent = "Connected (" + (data.subs || 0) + " subs)";
-                }} else {{
-                  statusEl.textContent = "Error";
-                }}
-              }} catch (e) {{
-                statusEl.textContent = txt;
-              }}
-            }} catch (e) {{
-              statusEl.textContent = "Ping failed";
-            }}
-          }}
-
-          async function refreshRegistry() {{
-            const statusEl = document.getElementById("singular-status");
-            statusEl.textContent = "Refreshing registry...";
-            try {{
-              const res = await fetch("/singular/refresh", {{ method: "POST" }});
-              const data = await res.json();
-              statusEl.textContent = "Registry: " + (data.count || 0) + " subs";
-            }} catch (e) {{
-              statusEl.textContent = "Refresh failed";
-            }}
-          }}
-
-          async function loadEvents() {{
-            try {{
-              const res = await fetch("/events");
-              const data = await res.json();
-              document.getElementById("log").innerText = (data.events || []).join("\\n") || "No events yet.";
-            }} catch (e) {{
-              document.getElementById("log").innerText = "Failed to load events: " + e;
-            }}
-          }}
-
-          document.getElementById("singular-form").onsubmit = async (e) => {{
-            e.preventDefault();
-            const f = e.target;
-            const token = f.token.value;
-            if (!token) {{
-              alert("Please enter a token.");
-              return;
-            }}
-            const txt = await postJSON("/config/singular", {{ token }});
-            await loadConfig();
-            await pingSingular();
-            alert("Token saved. Registry refreshed.");
-          }};
-
-          // Initial load
-          loadConfig();
-          pingSingular();
-          loadEvents();
-        </script>
-      </body>
-    </html>
-    """
+        saved = "..." + CONFIG.singular_token[-6:]
+    parts.append('<fieldset><legend>Singular Control App</legend>')
+    parts.append("<p>Enter your <strong>Control App Token</strong> (from Singular.live).</p>")
+    parts.append('<p>Saved token: <code id="saved-token">' + html_escape(saved) + "</code></p>")
+    parts.append('<p>Status: <span id="singular-status">Unknown</span></p>')
+    parts.append('<form id="singular-form">')
+    parts.append('<label>Control App Token <input name="token" autocomplete="off" /></label>')
+    parts.append('<button type="submit">Save Token &amp; Refresh Commands</button>')
+    parts.append('<button type="button" onclick="pingSingular()">Ping Singular</button>')
+    parts.append('<button type="button" onclick="refreshRegistry()">Rebuild Command List</button>')
+    parts.append("</form></fieldset>")
+    parts.append('<fieldset><legend>Event Log</legend>')
+    parts.append("<p>Shows recent HTTP commands and updates triggered by this tool.</p>")
+    parts.append('<button type="button" onclick="loadEvents()">Refresh Log</button>')
+    parts.append('<pre id="log">No events yet.</pre>')
+    parts.append("</fieldset>")
+    # JS
+    parts.append("<script>")
+    parts.append("async function postJSON(url, data) {")
+    parts.append("  const res = await fetch(url, {")
+    parts.append('    method: "POST",')
+    parts.append('    headers: { "Content-Type": "application/json" },')
+    parts.append("    body: JSON.stringify(data),")
+    parts.append("  });")
+    parts.append("  const text = await res.text();")
+    parts.append("  return text;")
+    parts.append("}")
+    parts.append("async function loadConfig() {")
+    parts.append("  try {")
+    parts.append('    const res = await fetch("/config");')
+    parts.append("    if (!res.ok) return;")
+    parts.append("    const cfg = await res.json();")
+    parts.append("    const tokenSet = cfg.singular.token_set;")
+    parts.append("    const token = cfg.singular.token;")
+    parts.append('    const saved = document.getElementById("saved-token");')
+    parts.append("    if (tokenSet && token) {")
+    parts.append('      saved.textContent = "..." + token.slice(-6);')
+    parts.append("    } else {")
+    parts.append('      saved.textContent = "Not set";')
+    parts.append("    }")
+    parts.append("  } catch (e) { console.error(e); }")
+    parts.append("}")
+    parts.append("async function pingSingular() {")
+    parts.append('  const statusEl = document.getElementById("singular-status");')
+    parts.append('  statusEl.textContent = "Checking...";')
+    parts.append("  try {")
+    parts.append('    const res = await fetch("/singular/ping");')
+    parts.append("    const txt = await res.text();")
+    parts.append("    try {")
+    parts.append("      const data = JSON.parse(txt);")
+    parts.append("      if (data.ok) {")
+    parts.append('        statusEl.textContent = "Connected (" + (data.subs || 0) + " subs)";')
+    parts.append("      } else { statusEl.textContent = 'Error'; }")
+    parts.append("    } catch (e) { statusEl.textContent = txt; }")
+    parts.append("  } catch (e) { statusEl.textContent = 'Ping failed'; }")
+    parts.append("}")
+    parts.append("async function refreshRegistry() {")
+    parts.append('  const statusEl = document.getElementById("singular-status");')
+    parts.append('  statusEl.textContent = "Refreshing registry...";')
+    parts.append("  try {")
+    parts.append('    const res = await fetch("/singular/refresh", { method: "POST" });')
+    parts.append("    const data = await res.json();")
+    parts.append('    statusEl.textContent = "Registry: " + (data.count || 0) + " subs";')
+    parts.append("  } catch (e) { statusEl.textContent = 'Refresh failed'; }")
+    parts.append("}")
+    parts.append("async function loadEvents() {")
+    parts.append("  try {")
+    parts.append('    const res = await fetch("/events");')
+    parts.append("    const data = await res.json();")
+    parts.append('    document.getElementById("log").innerText = (data.events || []).join("\\n") || "No events yet.";')
+    parts.append("  } catch (e) {")
+    parts.append('    document.getElementById("log").innerText = "Failed to load events: " + e;')
+    parts.append("  }")
+    parts.append("}")
+    parts.append('document.getElementById("singular-form").onsubmit = async (e) => {')
+    parts.append("  e.preventDefault();")
+    parts.append("  const f = e.target;")
+    parts.append("  const token = f.token.value;")
+    parts.append("  if (!token) { alert('Please enter a token.'); return; }")
+    parts.append('  await postJSON("/config/singular", { token });')
+    parts.append("  await loadConfig();")
+    parts.append("  await pingSingular();")
+    parts.append("  alert('Token saved. Registry refreshed.');")
+    parts.append("};")
+    parts.append("loadConfig();")
+    parts.append("pingSingular();")
+    parts.append("loadEvents();")
+    parts.append("</script>")
+    parts.append("</body></html>")
+    return HTMLResponse("".join(parts))
 
 
 @app.get("/integrations", response_class=HTMLResponse)
 def integrations_page():
-    return f"""
-    <html>
-      <head>
-        <title>Integrations - Singular Tweaks</title>
-        {_base_style()}
-      </head>
-      <body>
-        {_nav_html()}
-        <div class="version-badge">v{__version__} • port {effective_port()}</div>
-
-        <h1>Integrations</h1>
-        <p>Optional integrations for TfL and Singular Data Stream.</p>
-
-        <fieldset>
-          <legend>Singular Data Stream</legend>
-          <p>Currently: <code>{CONFIG.singular_stream_url or "not set"}</code></p>
-          <p>Enabled in settings: <strong>{"Yes" if CONFIG.enable_datastream else "No"}</strong></p>
-          <form id="stream-form">
-            <label>Data Stream URL
-              <input name="stream_url" value="{CONFIG.singular_stream_url or ""}" autocomplete="off" />
-            </label>
-            <button type="submit">Save Data Stream URL</button>
-          </form>
-        </fieldset>
-
-        <fieldset>
-          <legend>TfL API (optional)</legend>
-          <p>Enabled in settings: <strong>{"Yes" if CONFIG.enable_tfl else "No"}</strong></p>
-          <form id="tfl-form">
-            <label>TfL App ID
-              <input name="app_id" value="{CONFIG.tfl_app_id or ""}" autocomplete="off" />
-            </label>
-            <label>TfL App Key
-              <input name="app_key" value="{CONFIG.tfl_app_key or ""}" autocomplete="off" />
-            </label>
-            <button type="submit">Save TfL Credentials</button>
-          </form>
-        </fieldset>
-
-        <script>
-          async function postJSON(url, data) {{
-            const res = await fetch(url, {{
-              method: "POST",
-              headers: {{ "Content-Type": "application/json" }},
-              body: JSON.stringify(data),
-            }});
-            return res.text();
-          }}
-
-          document.getElementById("stream-form").onsubmit = async (e) => {{
-            e.preventDefault();
-            const f = e.target;
-            const stream_url = f.stream_url.value;
-            const txt = await postJSON("/config/stream", {{ stream_url }});
-            alert("Data stream updated.");
-          }};
-
-          document.getElementById("tfl-form").onsubmit = async (e) => {{
-            e.preventDefault();
-            const f = e.target;
-            const app_id = f.app_id.value;
-            const app_key = f.app_key.value;
-            const txt = await postJSON("/config/tfl", {{ app_id, app_key }});
-            alert("TfL config updated.");
-          }};
-        </script>
-      </body>
-    </html>
-    """
+    parts: List[str] = []
+    parts.append("<html><head>")
+    parts.append("<title>Integrations - Singular Tweaks</title>")
+    parts.append(_base_style())
+    parts.append("</head><body>")
+    parts.append(_nav_html())
+    parts.append('<div class="version-badge">v' + _runtime_version() + " • port " + str(effective_port()) + "</div>")
+    parts.append("<h1>Integrations</h1>")
+    parts.append("<p>Optional integrations for TfL and Singular Data Stream.</p>")
+    # Data stream
+    parts.append("<fieldset><legend>Singular Data Stream</legend>")
+    cur = html_escape(CONFIG.singular_stream_url or "not set")
+    parts.append("<p>Currently: <code>" + cur + "</code></p>")
+    parts.append("<p>Enabled in settings: <strong>" + ("Yes" if CONFIG.enable_datastream else "No") + "</strong></p>")
+    parts.append('<form id="stream-form">')
+    stream_val = html_escape(CONFIG.singular_stream_url or "")
+    parts.append('<label>Data Stream URL <input name="stream_url" value="' + stream_val + '" autocomplete="off" /></label>')
+    parts.append('<button type="submit">Save Data Stream URL</button>')
+    parts.append("</form></fieldset>")
+    # TfL
+    parts.append("<fieldset><legend>TfL API (optional)</legend>")
+    parts.append("<p>Enabled in settings: <strong>" + ("Yes" if CONFIG.enable_tfl else "No") + "</strong></p>")
+    parts.append('<form id="tfl-form">')
+    tfl_id = html_escape(CONFIG.tfl_app_id or "")
+    tfl_key = html_escape(CONFIG.tfl_app_key or "")
+    parts.append('<label>TfL App ID <input name="app_id" value="' + tfl_id + '" autocomplete="off" /></label>')
+    parts.append('<label>TfL App Key <input name="app_key" value="' + tfl_key + '" autocomplete="off" /></label>')
+    parts.append('<button type="submit">Save TfL Credentials</button>')
+    parts.append("</form></fieldset>")
+    # JS
+    parts.append("<script>")
+    parts.append("async function postJSON(url, data) {")
+    parts.append("  const res = await fetch(url, {")
+    parts.append('    method: "POST",')
+    parts.append('    headers: { "Content-Type": "application/json" },')
+    parts.append("    body: JSON.stringify(data),")
+    parts.append("  });")
+    parts.append("  return res.text();")
+    parts.append("}")
+    parts.append('document.getElementById("stream-form").onsubmit = async (e) => {')
+    parts.append("  e.preventDefault();")
+    parts.append("  const f = e.target;")
+    parts.append("  const stream_url = f.stream_url.value;")
+    parts.append('  await postJSON("/config/stream", { stream_url });')
+    parts.append("  alert('Data stream updated.');")
+    parts.append("};")
+    parts.append('document.getElementById("tfl-form").onsubmit = async (e) => {')
+    parts.append("  e.preventDefault();")
+    parts.append("  const f = e.target;")
+    parts.append("  const app_id = f.app_id.value;")
+    parts.append("  const app_key = f.app_key.value;")
+    parts.append('  await postJSON("/config/tfl", { app_id, app_key });')
+    parts.append("  alert('TfL config updated.');")
+    parts.append("};")
+    parts.append("</script>")
+    parts.append("</body></html>")
+    return HTMLResponse("".join(parts))
 
 
 @app.get("/commands", response_class=HTMLResponse)
 def commands_page(request: Request):
     base = _base_url(request)
-    return f"""
-    <html>
-      <head>
-        <title>Commands - Singular Tweaks</title>
-        {_base_style()}
-      </head>
-      <body>
-        {_nav_html()}
-        <div class="version-badge">v{__version__} • port {effective_port()}</div>
-
-        <h1>Singular Commands</h1>
-        <p>This view focuses on simple <strong>GET</strong> triggers you can use in automation systems.</p>
-        <p>Base URL: <code>{base}</code></p>
-
-        <fieldset>
-          <legend>Discovered Subcompositions</legend>
-          <p><button type="button" onclick="loadCommands()">Reload Commands</button></p>
-          <div id="commands">Loading...</div>
-        </fieldset>
-
-        <script>
-          async function loadCommands() {{
-            const container = document.getElementById("commands");
-            container.textContent = "Loading...";
-            try {{
-              const res = await fetch("/singular/commands");
-              if (!res.ok) {{
-                container.textContent = "Failed to load commands: " + res.status;
-                return;
-              }}
-              const data = await res.json();
-              const catalog = data.catalog || {{}};
-              let html = "";
-              const keys = Object.keys(catalog);
-              if (!keys.length) {{
-                container.textContent = "No subcompositions discovered. Set token on Home and refresh registry.";
-                return;
-              }}
-              for (const key of keys) {{
-                const item = catalog[key];
-                html += "<h3>" + item.name + " <small>(" + key + ")</small></h3>";
-                html += "<table><tr><th>Action</th><th>GET URL</th><th>Test</th></tr>";
-                html += "<tr><td>IN</td><td><code>" + item.in_url + "</code></td>";
-                html += "<td><a href='" + item.in_url + "' target='_blank'>Open</a></td></tr>";
-                html += "<tr><td>OUT</td><td><code>" + item.out_url + "</code></td>";
-                html += "<td><a href='" + item.out_url + "' target='_blank'>Open</a></td></tr>";
-                html += "</table>";
-
-                const fields = item.fields || {{}};
-                const fkeys = Object.keys(fields);
-                if (fkeys.length) {{
-                  html += "<p><strong>Fields:</strong></p>";
-                  html += "<table><tr><th>Field</th><th>Example GET</th></tr>";
-                  for (const fid of fkeys) {{
-                    const ex = fields[fid];
-                    if (ex.set_url) {{
-                      html += "<tr><td>" + fid + "</td><td><code>" + ex.set_url + "</code></td></tr>";
-                    }}
-                  }}
-                  html += "</table>";
-                }}
-              }}
-              container.innerHTML = html;
-            }} catch (e) {{
-              container.textContent = "Error: " + e;
-            }}
-          }}
-
-          loadCommands();
-        </script>
-      </body>
-    </html>
-    """
+    parts: List[str] = []
+    parts.append("<html><head>")
+    parts.append("<title>Commands - Singular Tweaks</title>")
+    parts.append(_base_style())
+    parts.append("</head><body>")
+    parts.append(_nav_html())
+    parts.append('<div class="version-badge">v' + _runtime_version() + " • port " + str(effective_port()) + "</div>")
+    parts.append("<h1>Singular Commands</h1>")
+    parts.append("<p>This view focuses on simple <strong>GET</strong> triggers you can use in automation systems.</p>")
+    parts.append("<p>Base URL: <code>" + html_escape(base) + "</code></p>")
+    parts.append("<fieldset><legend>Discovered Subcompositions</legend>")
+    parts.append('<p><button type="button" onclick="loadCommands()">Reload Commands</button></p>')
+    parts.append('<div style="margin-bottom:0.5rem;">')
+    parts.append('<label>Filter <input id="cmd-filter" placeholder="Filter by name or key" /></label>')
+    parts.append('<label>Sort <select id="cmd-sort">')
+    parts.append('<option value="name">Name (A–Z)</option>')
+    parts.append('<option value="key">Key (A–Z)</option>')
+    parts.append("</select></label></div>")
+    parts.append('<div id="commands">Loading...</div>')
+    parts.append("</fieldset>")
+    # JS
+    parts.append("<script>")
+    parts.append("let COMMANDS_CACHE = null;")
+    parts.append("function renderCommands() {")
+    parts.append('  const container = document.getElementById("commands");')
+    parts.append("  if (!COMMANDS_CACHE) { container.textContent = 'No commands loaded.'; return; }")
+    parts.append('  const filterText = document.getElementById("cmd-filter").value.toLowerCase();')
+    parts.append('  const sortMode = document.getElementById("cmd-sort").value;')
+    parts.append("  let entries = Object.entries(COMMANDS_CACHE);")
+    parts.append("  if (filterText) {")
+    parts.append("    entries = entries.filter(([key, item]) => {")
+    parts.append("      return key.toLowerCase().includes(filterText) || (item.name || '').toLowerCase().includes(filterText);")
+    parts.append("    });")
+    parts.append("  }")
+    parts.append("  entries.sort(([ka, a], [kb, b]) => {")
+    parts.append("    if (sortMode === 'key') { return ka.localeCompare(kb); }")
+    parts.append("    return (a.name || '').localeCompare(b.name || '');")
+    parts.append("  });")
+    parts.append("  if (!entries.length) { container.textContent = 'No matches.'; return; }")
+    parts.append("  let html = '';")
+    parts.append("  for (const [key, item] of entries) {")
+    parts.append("    html += '<h3>' + item.name + ' <small>(' + key + ')</small></h3>';")
+    parts.append("    html += '<table><tr><th>Action</th><th>GET URL</th><th>Test</th></tr>';")
+    parts.append("    html += '<tr><td>IN</td><td><code>' + item.in_url + '</code></td>' +")
+    parts.append("            '<td><a href=\"' + item.in_url + '\" target=\"_blank\">Open</a></td></tr>';")
+    parts.append("    html += '<tr><td>OUT</td><td><code>' + item.out_url + '</code></td>' +")
+    parts.append("            '<td><a href=\"' + item.out_url + '\" target=\"_blank\">Open</a></td></tr>';")
+    parts.append("    html += '</table>';")
+    parts.append("    const fields = item.fields || {};")
+    parts.append("    const fkeys = Object.keys(fields);")
+    parts.append("    if (fkeys.length) {")
+    parts.append("      html += '<p><strong>Fields:</strong></p>';")
+    parts.append("      html += '<table><tr><th>Field</th><th>Example GET</th></tr>';")
+    parts.append("      for (const fid of fkeys) {")
+    parts.append("        const ex = fields[fid];")
+    parts.append("        if (ex.set_url) {")
+    parts.append("          html += '<tr><td>' + fid + '</td><td><code>' + ex.set_url + '</code></td></tr>';")
+    parts.append("        }")
+    parts.append("      }")
+    parts.append("      html += '</table>';")
+    parts.append("    }")
+    parts.append("  }")
+    parts.append("  container.innerHTML = html;")
+    parts.append("}")
+    parts.append("async function loadCommands() {")
+    parts.append('  const container = document.getElementById("commands");')
+    parts.append("  container.textContent = 'Loading...';")
+    parts.append("  try {")
+    parts.append('    const res = await fetch("/singular/commands");')
+    parts.append("    if (!res.ok) { container.textContent = 'Failed to load commands: ' + res.status; return; }")
+    parts.append("    const data = await res.json();")
+    parts.append("    COMMANDS_CACHE = data.catalog || {};")
+    parts.append("    if (!Object.keys(COMMANDS_CACHE).length) {")
+    parts.append("      container.textContent = 'No subcompositions discovered. Set token on Home and refresh registry.';")
+    parts.append("      return;")
+    parts.append("    }")
+    parts.append("    renderCommands();")
+    parts.append("  } catch (e) { container.textContent = 'Error: ' + e; }")
+    parts.append("}")
+    parts.append("document.addEventListener('DOMContentLoaded', () => {")
+    parts.append('  document.getElementById("cmd-filter").addEventListener("input", renderCommands);')
+    parts.append('  document.getElementById("cmd-sort").addEventListener("change", renderCommands);')
+    parts.append("});")
+    parts.append("loadCommands();")
+    parts.append("</script>")
+    parts.append("</body></html>")
+    return HTMLResponse("".join(parts))
 
 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page():
-    return f"""
-    <html>
-      <head>
-        <title>Settings - Singular Tweaks</title>
-        {_base_style()}
-      </head>
-      <body>
-        {_nav_html()}
-        <div class="version-badge">v{__version__} • port {effective_port()}</div>
-
-        <h1>Settings</h1>
-
-        <fieldset>
-          <legend>General</legend>
-          <form id="settings-form">
-            <label>Port (takes effect on next restart)
-              <input id="port-input" name="port" type="number" value="{effective_port()}" />
-            </label>
-            <label>
-              <input type="checkbox" id="enable-tfl" {"checked" if CONFIG.enable_tfl else ""} />
-              Enable TfL integration
-            </label>
-            <label>
-              <input type="checkbox" id="enable-ds" {"checked" if CONFIG.enable_datastream else ""} />
-              Enable Data Stream integration
-            </label>
-            <button type="submit">Save Settings</button>
-          </form>
-          <p>Config file: <code>{CONFIG_PATH}</code></p>
-        </fieldset>
-
-        <fieldset>
-          <legend>Updates</legend>
-          <p>Current version: <code>{__version__}</code></p>
-          <button type="button" onclick="checkUpdates()">Check GitHub for latest release</button>
-          <pre id="update-output">Not checked yet.</pre>
-        </fieldset>
-
-        <script>
-          async function postJSON(url, data) {{
-            const res = await fetch(url, {{
-              method: "POST",
-              headers: {{ "Content-Type": "application/json" }},
-              body: JSON.stringify(data),
-            }});
-            return res.json();
-          }}
-
-          document.getElementById("settings-form").onsubmit = async (e) => {{
-            e.preventDefault();
-            const portVal = document.getElementById("port-input").value;
-            const port = portVal ? parseInt(portVal, 10) : null;
-            const enable_tfl = document.getElementById("enable-tfl").checked;
-            const enable_datastream = document.getElementById("enable-ds").checked;
-            const data = await postJSON("/settings", {{ port, enable_tfl, enable_datastream }});
-            alert(data.message || "Settings saved. Restart app to apply new port.");
-            location.reload();
-          }};
-
-          async function checkUpdates() {{
-            const out = document.getElementById("update-output");
-            out.textContent = "Checking GitHub...";
-            try {{
-              const owner = "BlueElliott";
-              const repo = "Singular-Tweaks";
-              const url = "https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest";
-              const res = await fetch(url);
-              if (!res.ok) {{
-                out.textContent = "GitHub API error: " + res.status;
-                return;
-              }}
-              const data = await res.json();
-              const latest = data.tag_name || data.name || "unknown";
-              let msg = "Current version: {__version__}\\nLatest release: " + latest;
-              if (latest !== "v{__version__}" && latest !== "{__version__}") {{
-                msg += "\\n\\nA newer version may be available.";
-              }} else {{
-                msg += "\\n\\nYou are up to date.";
-              }}
-              if (data.html_url) {{
-                msg += "\\nRelease page: " + data.html_url;
-              }}
-              out.textContent = msg;
-            }} catch (e) {{
-              out.textContent = "Update check failed: " + e;
-            }}
-          }}
-        </script>
-      </body>
-    </html>
-    """
+    parts: List[str] = []
+    parts.append("<html><head>")
+    parts.append("<title>Settings - Singular Tweaks</title>")
+    parts.append(_base_style())
+    parts.append("</head><body>")
+    parts.append(_nav_html())
+    parts.append('<div class="version-badge">v' + _runtime_version() + " • port " + str(effective_port()) + "</div>")
+    parts.append("<h1>Settings</h1>")
+    # General
+    parts.append("<fieldset><legend>General</legend>")
+    parts.append('<form id="settings-form">')
+    parts.append('<label>Port (takes effect on next restart)')
+    parts.append('<input id="port-input" name="port" type="number" value="' + str(effective_port()) + '" />')
+    parts.append("</label>")
+    parts.append('<label><input type="checkbox" id="enable-tfl" ' + ('checked' if CONFIG.enable_tfl else '') + ' /> Enable TfL integration</label>')
+    parts.append('<label><input type="checkbox" id="enable-ds" ' + ('checked' if CONFIG.enable_datastream else '') + ' /> Enable Data Stream integration</label>')
+    parts.append('<label>Theme <select id="theme-select">')
+    parts.append('<option value="dark"' + (' selected' if CONFIG.theme == 'dark' else '') + ">Dark</option>")
+    parts.append('<option value="light"' + (' selected' if CONFIG.theme == 'light' else '') + ">Light</option>")
+    parts.append("</select></label>")
+    parts.append('<button type="submit">Save Settings</button>')
+    parts.append("</form>")
+    parts.append("<p>Config file: <code>" + html_escape(str(CONFIG_PATH)) + "</code></p>")
+    parts.append("</fieldset>")
+    # Updates
+    parts.append("<fieldset><legend>Updates</legend>")
+    parts.append("<p>Current version: <code>" + _runtime_version() + "</code></p>")
+    parts.append('<button type="button" onclick="checkUpdates()">Check GitHub for latest release</button>')
+    parts.append('<pre id="update-output">Not checked yet.</pre>')
+    parts.append("</fieldset>")
+    # JS
+    parts.append("<script>")
+    parts.append("async function postJSON(url, data) {")
+    parts.append("  const res = await fetch(url, {")
+    parts.append('    method: "POST",')
+    parts.append('    headers: { "Content-Type": "application/json" },')
+    parts.append("    body: JSON.stringify(data),")
+    parts.append("  });")
+    parts.append("  return res.json();")
+    parts.append("}")
+    parts.append('document.getElementById("settings-form").onsubmit = async (e) => {')
+    parts.append("  e.preventDefault();")
+    parts.append('  const portVal = document.getElementById("port-input").value;')
+    parts.append("  const port = portVal ? parseInt(portVal, 10) : null;")
+    parts.append('  const enable_tfl = document.getElementById("enable-tfl").checked;')
+    parts.append('  const enable_datastream = document.getElementById("enable-ds").checked;')
+    parts.append('  const theme = document.getElementById("theme-select").value || "dark";')
+    parts.append('  const data = await postJSON("/settings", { port, enable_tfl, enable_datastream, theme });')
+    parts.append("  alert(data.message || 'Settings saved. Restart app to apply new port.');")
+    parts.append("  location.reload();")
+    parts.append("};")
+    parts.append("async function checkUpdates() {")
+    parts.append('  const out = document.getElementById("update-output");')
+    parts.append('  out.textContent = "Checking GitHub...";')
+    parts.append("  try {")
+    parts.append('    const owner = "BlueElliott";')
+    parts.append('    const repo = "Singular-Tweaks";')
+    parts.append('    const url = "https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest";')
+    parts.append("    const res = await fetch(url);")
+    parts.append("    if (!res.ok) {")
+    parts.append("      if (res.status === 404) {")
+    parts.append('        out.textContent = "Updates: this repository is private or has no releases visible to the public.";')
+    parts.append("      } else {")
+    parts.append('        out.textContent = "GitHub API error: " + res.status;')
+    parts.append("      }")
+    parts.append("      return;")
+    parts.append("    }")
+    parts.append("    const data = await res.json();")
+    parts.append("    const latest = data.tag_name || data.name || 'unknown';")
+    parts.append("    const current = '" + _runtime_version() + "';")
+    parts.append("    let msg = 'Current version: ' + current + '\\nLatest release: ' + latest;")
+    parts.append("    if (latest !== current && latest !== 'v' + current) {")
+    parts.append("      msg += '\\n\\nA newer version may be available.';")
+    parts.append("    } else {")
+    parts.append("      msg += '\\n\\nYou are up to date.';")
+    parts.append("    }")
+    parts.append("    if (data.html_url) { msg += '\\nRelease page: ' + data.html_url; }")
+    parts.append("    out.textContent = msg;")
+    parts.append("  } catch (e) { out.textContent = 'Update check failed: ' + e; }")
+    parts.append("}")
+    parts.append("</script>")
+    parts.append("</body></html>")
+    return HTMLResponse("".join(parts))
 
 
 @app.get("/help")
@@ -1154,13 +1093,19 @@ def help_index():
     }
 
 
-# ================== 6. MAIN ==================
+# ================== 10. MAIN ENTRY POINT ==================
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the application."""
     import uvicorn
-
     port = effective_port()
-    logging.getLogger(__name__).info(
-        "Starting FastAPI server on http://localhost:%s (binding 0.0.0.0) ...", port
+    logger.info(
+        "Starting Singular Tweaks v%s on http://localhost:%s (binding 0.0.0.0)",
+        _runtime_version(),
+        port
     )
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+if __name__ == "__main__":
+    main()

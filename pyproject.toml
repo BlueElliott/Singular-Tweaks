@@ -1,6 +1,45 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "singular-tweaks"
 version = "1.0.1"
-description = "Python tools and tweaks for controlling Singular.live"
+description = "Helper UI and HTTP API for Singular.live + optional TfL data"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "BlueElliott", email = "elliott.ramdass10@gmail.com"}
+]
+keywords = ["singular", "tfl", "fastapi"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "requests>=2.28.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ramdasse/Singular-Tweaks"
+Repository = "https://github.com/ramdasse/Singular-Tweaks.git"
+Issues = "https://github.com/ramdasse/Singular-Tweaks/issues"
+
+[tool.setuptools]
+packages = ["singular_tweaks"]

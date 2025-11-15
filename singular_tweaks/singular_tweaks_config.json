@@ -1,0 +1,10 @@
+{
+  "singular_token": "3tIm0opSzkiOk5kLzm0cxr",
+  "singular_stream_url": null,
+  "tfl_app_id": null,
+  "tfl_app_key": null,
+  "enable_tfl": false,
+  "enable_datastream": false,
+  "theme": "dark",
+  "port": 3113
+}
