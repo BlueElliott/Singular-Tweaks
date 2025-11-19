@@ -1,8 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import get_module_collection_mode
-from PyInstaller.building.api import EXE, PYZ, Analysis
-
 import os
+
+try:
+    from PyInstaller.building.build_main import Analysis
+    from PyInstaller.building.api import EXE, PYZ
+except ImportError:
+    from PyInstaller.building.api import Analysis, EXE, PYZ
 
 # Build data files list
 datas = []
