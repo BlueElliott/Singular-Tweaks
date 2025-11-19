@@ -4,35 +4,27 @@
 !define COMPANY_NAME "BlueElliott"
 !define APP_EXE "SingularTweaks.exe"
 
-; VERSION will be passed from GitHub Actions as /DVERSION=v1.0.x
+; VERSION passed from GitHub Actions: /DVERSION=v1.0.8
 !ifdef VERSION
   !define APP_VERSION "${VERSION}"
 !else
-  !define APP_VERSION "dev"
+  !define APP_VERSION "1.0.8"
 !endif
 
-; Output installer name (we'll put it in dist\ via OutFile path)
+Name "Singular Tweaks ${APP_VERSION}"
 OutFile "dist\${APP_NAME}-Setup-${APP_VERSION}.exe"
-
-; Default installation directory (per-user, no admin needed)
 InstallDir "$LOCALAPPDATA\${APP_NAME}"
-
-; Create an uninstaller entry in "Apps & Features"
-InstallDirRegKey HKCU "Software\${COMPANY_NAME}\${APP_NAME}" "InstallDir"
-
 RequestExecutionLevel user
 Unicode true
 
-;--------------------------------
-; Pages
+!include "MUI2.nsh"
 
-Page directory
-Page instfiles
-UninstPage uninstConfirm
-UninstPage instfiles
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
 
-;--------------------------------
-; Installer Section
+!insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
   SetOutPath "$INSTDIR"
@@ -41,50 +33,52 @@ Section "Install"
   WriteRegStr HKCU "Software\${COMPANY_NAME}\${APP_NAME}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\${COMPANY_NAME}\${APP_NAME}" "Version" "${APP_VERSION}"
 
-  ; Main files
+  ; Main executable
   File "dist\${APP_EXE}"
-  ; Optional docs bundled in your zip step:
-  ; We'll include README and version.txt if present
-  IfFileExists "release\README.md" 0 +2
-    File /oname=README.md "release\README.md"
-  IfFileExists "release\version.txt" 0 +2
-    File "release\version.txt"
 
-  ; Start Menu folder
+  ; Copy static folder (fonts, etc.)
+  SetOutPath "$INSTDIR\static"
+  File /r "static\*.*"
+  SetOutPath "$INSTDIR"
+
+  ; Optional README
+  IfFileExists "README.md" 0 +2
+    File "README.md"
+
+  ; Start Menu
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
-  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
+  CreateShortCut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
 
   ; Desktop shortcut
-  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\${APP_EXE}" 0
+  CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
 
-  ; Register uninstaller
+  ; Register in Add/Remove Programs
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "Publisher" "${COMPANY_NAME}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayVersion" "${APP_VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
+
   WriteUninstaller "$INSTDIR\Uninstall.exe"
 SectionEnd
 
-;--------------------------------
-; Uninstaller Section
-
 Section "Uninstall"
-  ; Remove files
   Delete "$INSTDIR\${APP_EXE}"
   Delete "$INSTDIR\README.md"
-  Delete "$INSTDIR\version.txt"
   Delete "$INSTDIR\Uninstall.exe"
+
+  ; Remove static folder
+  RMDir /r "$INSTDIR\static"
 
   ; Remove shortcuts
   Delete "$DESKTOP\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
   RMDir "$SMPROGRAMS\${APP_NAME}"
 
-  ; Remove registry keys
+  ; Clean up registry
   DeleteRegKey HKCU "Software\${COMPANY_NAME}\${APP_NAME}"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 
-  ; Remove install dir
+  ; Remove install directory (will fail if config files remain, which is fine)
   RMDir "$INSTDIR"
 SectionEnd

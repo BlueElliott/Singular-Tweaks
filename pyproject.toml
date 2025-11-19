@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,34 +12,90 @@ license = {text = "MIT"}
 authors = [
     {name = "BlueElliott", email = "elliott.ramdass10@gmail.com"}
 ]
-keywords = ["singular", "tfl", "fastapi"]
+keywords = ["singular", "tfl", "broadcast", "graphics", "control", "automation"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: System :: Monitoring",
 ]
 
 dependencies = [
-    "fastapi>=0.100.0",
-    "uvicorn[standard]>=0.23.0",
-    "requests>=2.28.0",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
     "pydantic>=2.0.0",
+    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0",
-    "black>=23.0",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
     "ruff>=0.1.0",
+    "bandit>=1.7.0",
+]
+
+build = [
+    "pyinstaller>=6.0.0",
+    "build>=1.0.0",
+    "twine>=4.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/ramdasse/Singular-Tweaks"
-Repository = "https://github.com/ramdasse/Singular-Tweaks.git"
-Issues = "https://github.com/ramdasse/Singular-Tweaks/issues"
+Homepage = "https://github.com/BlueElliott/Singular-Tweaks"
+Repository = "https://github.com/BlueElliott/Singular-Tweaks"
+Issues = "https://github.com/BlueElliott/Singular-Tweaks/issues"
+Documentation = "https://github.com/BlueElliott/Singular-Tweaks#readme"
+
+[project.scripts]
+singular-tweaks = "singular_tweaks.core:main"
 
 [tool.setuptools]
 packages = ["singular_tweaks"]
+
+[tool.setuptools.package-data]
+singular_tweaks = ["*.json"]
+"*" = ["static/*"]
+
+# ==================== BLACK ====================
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+
+# ==================== RUFF ====================
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+]
+
+# ==================== BANDIT ====================
+[tool.bandit]
+exclude_dirs = [".venv", "venv", "build", "dist"]
+skips = ["B101"]

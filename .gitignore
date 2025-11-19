@@ -12,11 +12,15 @@ build/
 dist/
 *.egg-info/
 
-# PyInstaller
-*.spec
+# PyInstaller - DO NOT exclude .spec files!
+# We need SingularTweaks.spec in version control
 
 # VS Code
 .vscode/
+
+# Config files (user-specific, don't commit)
+singular_tweaks_config.json
+*_config.json
 
 # OS junk
 .DS_Store
