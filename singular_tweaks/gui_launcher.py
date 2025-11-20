@@ -14,8 +14,8 @@ import pystray
 from PIL import Image, ImageDraw
 from io import StringIO
 
-# Import the main app
-from singular_tweaks.core import main as run_server, effective_port, _runtime_version
+# Import needed functions
+from singular_tweaks.core import effective_port, _runtime_version
 
 
 def is_port_in_use(port: int) -> bool:
@@ -221,9 +221,24 @@ class SingularTweaksGUI:
     def _run_server(self):
         """Run the server (called in background thread)."""
         try:
-            run_server()
+            import uvicorn
+            from singular_tweaks.core import app, effective_port
+
+            # Configure uvicorn with minimal logging to avoid formatter errors
+            config = uvicorn.Config(
+                app,
+                host="0.0.0.0",
+                port=effective_port(),
+                log_level="info",
+                access_log=True,
+                log_config=None  # Disable default log config to avoid formatter errors
+            )
+            server = uvicorn.Server(config)
+            server.run()
         except Exception as e:
             print(f"Error starting server: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _server_started(self):
         """Update UI after server starts."""
