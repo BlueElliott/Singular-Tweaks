@@ -222,16 +222,24 @@ class SingularTweaksGUI:
         """Run the server (called in background thread)."""
         try:
             import uvicorn
+            import logging
             from singular_tweaks.core import app, effective_port
 
-            # Configure uvicorn with minimal logging to avoid formatter errors
+            # Configure basic logging to avoid uvicorn formatter errors
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(levelname)s: %(message)s',
+                force=True
+            )
+
+            # Configure uvicorn with custom logging to avoid formatter errors
             config = uvicorn.Config(
                 app,
                 host="0.0.0.0",
                 port=effective_port(),
                 log_level="info",
-                access_log=True,
-                log_config=None  # Disable default log config to avoid formatter errors
+                access_log=False,  # Disable access log to reduce console noise
+                log_config=None  # Disable default log config
             )
             server = uvicorn.Server(config)
             server.run()

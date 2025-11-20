@@ -1,11 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import sys
 
 try:
     from PyInstaller.building.build_main import Analysis
     from PyInstaller.building.api import EXE, PYZ
 except ImportError:
     from PyInstaller.building.api import Analysis, EXE, PYZ
+
+# Get version from package
+sys.path.insert(0, os.path.abspath('.'))
+try:
+    from singular_tweaks import __version__
+    VERSION = __version__
+except:
+    VERSION = "1.0.11"
 
 # Build data files list
 datas = []
@@ -53,7 +62,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='SingularTweaks',
+    name=f'SingularTweaks-v{VERSION}',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
