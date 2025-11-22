@@ -1,17 +1,18 @@
-; installer.nsi - NSIS installer for SingularTweaks
+; installer.nsi - NSIS installer for Elliott's Singular Controls
 
-!define APP_NAME "SingularTweaks"
+!define APP_NAME "ElliottsSingularControls"
+!define APP_DISPLAY_NAME "Elliott's Singular Controls"
 !define COMPANY_NAME "BlueElliott"
-!define APP_EXE "SingularTweaks.exe"
+!define APP_EXE "ElliottsSingularControls.exe"
 
 ; VERSION passed from GitHub Actions: /DVERSION=v1.0.8
 !ifdef VERSION
   !define APP_VERSION "${VERSION}"
 !else
-  !define APP_VERSION "1.0.8"
+  !define APP_VERSION "1.0.14"
 !endif
 
-Name "Singular Tweaks ${APP_VERSION}"
+Name "${APP_DISPLAY_NAME} ${APP_VERSION}"
 OutFile "dist\${APP_NAME}-Setup-${APP_VERSION}.exe"
 InstallDir "$LOCALAPPDATA\${APP_NAME}"
 RequestExecutionLevel user
@@ -53,7 +54,7 @@ Section "Install"
   CreateShortCut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
 
   ; Register in Add/Remove Programs
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "${APP_NAME}"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "${APP_DISPLAY_NAME}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "Publisher" "${COMPANY_NAME}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayVersion" "${APP_VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "InstallLocation" "$INSTDIR"

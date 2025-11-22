@@ -62,7 +62,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name=f'SingularTweaks-v{VERSION}',
+    name='ElliottsSingularControls',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -75,4 +75,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='static/esc_icon.ico',
 )

@@ -1,10 +1,10 @@
 """
-Singular Tweaks - Tools and tweaks for controlling Singular.live
+Elliott's Singular Controls - Tools and controls for Singular.live
 
 A helper UI and HTTP API for Singular.live with optional TfL data integration.
 """
 
-__version__ = "1.0.13"
+__version__ = "1.0.14"
 __author__ = "BlueElliott"
 __license__ = "MIT"
 
