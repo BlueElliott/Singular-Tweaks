@@ -25,7 +25,7 @@ except:
     pass  # Not on Windows or ctypes not available
 
 # Import needed functions
-from singular_tweaks.core import effective_port, _runtime_version
+from elliotts_singular_controls.core import effective_port, _runtime_version
 
 
 def is_port_in_use(port: int) -> bool:
@@ -101,7 +101,7 @@ class SingularTweaksGUI:
                 self.root.iconbitmap(str(icon_path))
             else:
                 # Try relative to exe location
-                from singular_tweaks.core import _app_root
+                from elliotts_singular_controls.core import _app_root
                 icon_path = _app_root() / "static" / "esc_icon.ico"
                 if icon_path.exists():
                     self.root.iconbitmap(str(icon_path))
@@ -437,7 +437,7 @@ class SingularTweaksGUI:
         )
         if new_port and new_port != effective_port():
             # Update config
-            from singular_tweaks.core import CONFIG, save_config
+            from elliotts_singular_controls.core import CONFIG, save_config
             CONFIG.port = new_port
             save_config(CONFIG)
 
@@ -578,7 +578,7 @@ class SingularTweaksGUI:
         try:
             import uvicorn
             import logging
-            from singular_tweaks.core import app, effective_port
+            from elliotts_singular_controls.core import app, effective_port
 
             # Configure basic logging to avoid uvicorn formatter errors
             logging.basicConfig(
@@ -638,7 +638,7 @@ class SingularTweaksGUI:
             self._close_console()
 
         # Reload configuration
-        from singular_tweaks.core import load_config, CONFIG, build_registry
+        from elliotts_singular_controls.core import load_config, CONFIG, build_registry
         try:
             # Reload config from file
             new_config = load_config()
@@ -662,7 +662,7 @@ class SingularTweaksGUI:
             print(f"[Restart] Registry rebuild skipped: {e}")
 
         # Clear event log
-        from singular_tweaks.core import COMMAND_LOG
+        from elliotts_singular_controls.core import COMMAND_LOG
         COMMAND_LOG.clear()
         print("[Restart] Event log cleared")
 

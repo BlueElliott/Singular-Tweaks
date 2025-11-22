@@ -11,10 +11,10 @@ except ImportError:
 # Get version from package
 sys.path.insert(0, os.path.abspath('.'))
 try:
-    from singular_tweaks import __version__
+    from elliotts_singular_controls import __version__
     VERSION = __version__
 except:
-    VERSION = "1.0.11"
+    VERSION = "1.0.14"
 
 # Build data files list
 datas = []
@@ -24,7 +24,7 @@ if os.path.exists('README.md'):
     datas.append(('README.md', '.'))
 
 a = Analysis(
-    ['singular_tweaks/__main__.py'],
+    ['elliotts_singular_controls/__main__.py'],
     pathex=[],
     binaries=[],
     datas=datas,

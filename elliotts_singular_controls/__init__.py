@@ -8,6 +8,6 @@ __version__ = "1.0.14"
 __author__ = "BlueElliott"
 __license__ = "MIT"
 
-from singular_tweaks.core import app, effective_port
+from elliotts_singular_controls.core import app, effective_port
 
 __all__ = ["app", "effective_port", "__version__"]

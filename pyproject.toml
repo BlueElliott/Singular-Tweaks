@@ -65,13 +65,13 @@ Issues = "https://github.com/BlueElliott/Singular-Tweaks/issues"
 Documentation = "https://github.com/BlueElliott/Singular-Tweaks#readme"
 
 [project.scripts]
-singular-tweaks = "singular_tweaks.core:main"
+elliotts-singular-controls = "elliotts_singular_controls.core:main"
 
 [tool.setuptools]
-packages = ["singular_tweaks"]
+packages = ["elliotts_singular_controls"]
 
 [tool.setuptools.package-data]
-singular_tweaks = ["*.json"]
+elliotts_singular_controls = ["*.json"]
 "*" = ["static/*"]
 
 # ==================== BLACK ====================

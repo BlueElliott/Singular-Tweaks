@@ -14,7 +14,7 @@ dist/
 *.egg-info/
 
 # PyInstaller - DO NOT exclude .spec files!
-# We need SingularTweaks.spec in version control
+# We need ElliottsSingularControls.spec in version control
 
 # VS Code
 .vscode/
@@ -23,7 +23,7 @@ dist/
 .claude/
 
 # Config files (user-specific, don't commit)
-singular_tweaks_config.json
+elliotts_singular_controls_config.json
 *_config.json
 
 # OS junk

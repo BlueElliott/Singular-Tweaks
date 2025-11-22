@@ -73,7 +73,7 @@ def _app_root() -> Path:
     """Folder where the app is running from (install dir or source)."""
     if getattr(sys, "frozen", False):  # PyInstaller exe
         return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent  # Go up one level from singular_tweaks/
+    return Path(__file__).resolve().parent.parent  # Go up one level from elliotts_singular_controls/
 
 
 def _runtime_version() -> str:
@@ -92,7 +92,7 @@ def _runtime_version() -> str:
         pass
     # Try to get version from package
     try:
-        from singular_tweaks import __version__
+        from elliotts_singular_controls import __version__
         return __version__
     except Exception:
         pass
@@ -173,13 +173,13 @@ def _config_dir() -> Path:
     if getattr(sys, "frozen", False):
         base = Path(sys.executable).parent
     else:
-        # When running from source, use singular_tweaks directory
+        # When running from source, use elliotts_singular_controls directory
         base = Path(__file__).resolve().parent
     return base
 
-CONFIG_PATH = _config_dir() / "singular_tweaks_config.json"
+CONFIG_PATH = _config_dir() / "elliotts_singular_controls_config.json"
 
-logger = logging.getLogger("singular_tweaks")
+logger = logging.getLogger("elliotts_singular_controls")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
