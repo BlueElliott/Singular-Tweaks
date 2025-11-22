@@ -62,7 +62,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='ElliottsSingularControls',
+    name=f'ElliottsSingularControls-{VERSION}',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

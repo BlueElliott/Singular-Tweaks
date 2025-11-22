@@ -62,7 +62,7 @@ jobs:
 
       - name: Verify executable exists
         run: |
-          $exePath = Get-ChildItem "dist\ElliottsSingularControls.exe" | Select-Object -First 1
+          $exePath = Get-ChildItem "dist\ElliottsSingularControls-*.exe" | Select-Object -First 1
           if ($exePath) {
             Write-Host "✓ Executable built successfully: $($exePath.Name)"
             Get-Item $exePath | Format-List
@@ -76,7 +76,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-executable
-          path: dist/ElliottsSingularControls.exe
+          path: dist/ElliottsSingularControls-*.exe
           retention-days: 90
 
   # ==================== BUILD WINDOWS INSTALLER ====================
@@ -277,7 +277,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/windows-executable/ElliottsSingularControls.exe
+            artifacts/windows-executable/ElliottsSingularControls-*.exe
           body_path: release-notes.md
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
