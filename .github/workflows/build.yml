@@ -62,7 +62,7 @@ jobs:
 
       - name: Verify executable exists
         run: |
-          $exePath = Get-ChildItem "dist\SingularTweaks-v*.exe" | Select-Object -First 1
+          $exePath = Get-ChildItem "dist\ElliottsSingularControls.exe" | Select-Object -First 1
           if ($exePath) {
             Write-Host "✓ Executable built successfully: $($exePath.Name)"
             Get-Item $exePath | Format-List
@@ -76,7 +76,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-executable
-          path: dist/SingularTweaks-v*.exe
+          path: dist/ElliottsSingularControls.exe
           retention-days: 90
 
   # ==================== BUILD WINDOWS INSTALLER ====================
@@ -228,55 +228,56 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           PREV_TAG=$(git describe --abbrev=0 --tags ${{ github.ref_name }}^ 2>/dev/null || echo "")
-          
+
           cat > release-notes.md << 'EOF'
-          ## 🎉 Singular Tweaks ${{ github.ref_name }}
-          
-          Helper UI and HTTP API for Singular.live with optional TfL data integration.
-          
+          ## Elliott's Singular Controls ${{ github.ref_name }}
+
+          A premium desktop application for controlling Singular.live graphics with TfL integration.
+
           ### 📦 Download
 
-          **Download:** `SingularTweaks-v${{ github.ref_name }}.exe` (Portable)
-          - No installation needed
+          **Download:** `ElliottsSingularControls.exe` (Portable)
+          - No installation needed - fully standalone!
           - Run from any folder
-          - Config saves in the same folder as the EXE
-          - Just download, place it where you want, and run
+          - No Python required
 
-          **Python Users:**
-          - Install via pip: `pip install singular-tweaks`
+          ### ✨ Features
+          - Control Singular.live graphics via HTTP API
+          - TfL line status integration with official branding colours
+          - Web-based interface accessible from any browser
+          - Click-to-copy command URLs for automation
+          - Standalone TFL control page for external operators
 
           ### 🚀 Quick Start
 
-          1. Download `SingularTweaks-v${{ github.ref_name }}.exe`
-          2. Place it in any folder you want (e.g., Desktop, Documents, etc.)
-          3. Run the executable
-          4. Click "Start Server" in the GUI launcher
-          5. Click "Launch GUI" or open your browser to `http://localhost:3113`
-          6. Configure your Singular Control App token
-          
+          1. Download `ElliottsSingularControls.exe`
+          2. Run the executable
+          3. Click "Open Web GUI" or visit `http://localhost:3113`
+          4. Configure your Singular Control App token
+
           ### 📝 Changelog
           EOF
-          
+
           if [ -n "$PREV_TAG" ]; then
             echo "" >> release-notes.md
             echo "**Changes since $PREV_TAG:**" >> release-notes.md
             git log $PREV_TAG..${{ github.ref_name }} --pretty=format:"- %s (%h)" >> release-notes.md
           fi
-          
+
           cat >> release-notes.md << 'EOF'
-          
+
           ### 🐛 Issues?
-          
+
           Report bugs at: https://github.com/BlueElliott/Singular-Tweaks/issues
           EOF
-          
+
           cat release-notes.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/windows-executable/SingularTweaks-v*.exe
+            artifacts/windows-executable/ElliottsSingularControls.exe
           body_path: release-notes.md
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
