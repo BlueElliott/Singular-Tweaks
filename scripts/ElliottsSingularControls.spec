@@ -9,8 +9,8 @@ except ImportError:
     from PyInstaller.building.api import Analysis, EXE, PYZ
 
 # Get the repo root (parent of scripts/ folder where this spec file lives)
-SPEC_DIR = os.path.dirname(os.path.abspath(SPECPATH))
-REPO_ROOT = os.path.dirname(SPEC_DIR)
+# SPECPATH is the full path to this .spec file
+REPO_ROOT = os.path.dirname(os.path.dirname(SPECPATH))
 
 # Get version from package
 sys.path.insert(0, REPO_ROOT)
