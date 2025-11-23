@@ -58,7 +58,7 @@ jobs:
           cat version.txt
 
       - name: Build executable with PyInstaller
-        run: pyinstaller scripts/ElliottsSingularControls.spec
+        run: pyinstaller ElliottsSingularControls.spec
 
       - name: Verify executable exists
         run: |
